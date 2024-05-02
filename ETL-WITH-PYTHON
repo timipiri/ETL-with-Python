@@ -1,133 +1,139 @@
+!pip install html5lib
+!pip install requests
+!pip install bs4
+!pip install pandas
+!pip install sqlite3
+!pip install numpy
+!pip install datetime
+
 import requests
-import pandas as pd
 from bs4 import BeautifulSoup
-import sqlite3
+import pandas as pd
 import numpy as np
+import sqlite3
 from datetime import datetime
+import csv
+data_url = 'https://web.archive.org/web/20230908091635 /https://en.wikipedia.org/wiki/List_of_largest_banks'
+exchange_rate_path = "exchange_rate.csv"
+table_attribs = ["Name", "MC_USD_Billion"]
+db_name = 'Banks.db'
+table_name = 'Largest_banks'
+output_csv_path = './Largest_banks_data.csv'
+log_file = "code_log.txt"
 
-# Task 1: Write a function to log progress
-def log_progress(log_points):
-    try:
-        with open('code_log.txt', 'a') as f:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            for point in log_points:
-                f.write(f"{timestamp} - {point}\n")
-    except Exception as e:
-        print(f"Error occurred while logging progress: {str(e)}")
+# Define functions for ETL operations
+def log_progress(message):
+    ''' This function logs the mentioned message of a given stage of the
+    code execution to a log file. Function returns nothing'''
+    timestamp_format = '%Y-%h-%d-%H:%M:%S' # Year-Monthname-Day-Hour-Minute-Second 
+    now = datetime.now() # get current timestamp 
+    timestamp = now.strftime(timestamp_format) 
+    with open('code_log.txt',"a") as f: 
+        f.write(timestamp + ' : ' + message + '\n')
 
-# Task 2: Extract tabular information from the given URL
-def extract(url):
-    try:
-        response = requests.get(url)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        table = soup.find('table', {'class': 'wikitable'})
+# Task2: Extracting data
+def extract(url, table_attribs):
+    ''' This function aims to extract the required
+    information from the website and save it to a data frame. The
+    function returns the data frame for further processing. '''
+    page = requests.get(url).text
+    print(page[1399:1423])
+    soup = BeautifulSoup(page,'html.parser')
+    df = pd.DataFrame(columns=table_attribs)
+    tables = soup.find_all('tbody')
+    rows = tables[0].find_all('tr')
 
-        # Extract data from the table
-        df = pd.read_html(str(table))[0]
-        df.columns = df.iloc[0]
-        df = df[1:].reset_index(drop=True)
+    for row in rows:
+        if row.find('td') is not None:
+           col = row.find_all('td')
+           bank_name = col[1].find_all('a')[1]['title']
+           market_cap = col[2].contents[0][:-1]
+           data_dict = {"Name": bank_name,
+                             "MC_USD_Billion": float(market_cap)}
+           df1 = pd.DataFrame(data_dict, index=[0])
+           df = pd.concat([df,df1], ignore_index=True)
+    return df
 
-        return df
-    except Exception as e:
-        print(f"Error occurred while extracting data from URL: {str(e)}")
-        return None
+# Read CSV File
+def read_exchange_rate_csv(file_path):
+    exchange_rate_dict = {}
+    with open(file_path, 'r') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            # Assuming the first column contains the keys and the second column contains the values
+            if len(row) >= 2:  # Check if the row has at least two columns
+                exchange_rate_dict[row[0]] = row[1]
+    return exchange_rate_dict
+exchange_rate_file_path = "/home/project/exchange_rate.csv"
+exchange_rate_dict = read_exchange_rate_csv(exchange_rate_file_path)
+print(exchange_rate_dict)
 
-# Task 3: Transform dataframe by adding columns for Market Capitalization in GBP, EUR and INR
-def transform(df, exchange_rates_df):
-    try:
-        # Merge dataframes on Currency column
-        df['MC_USD_Billion'] = pd.to_numeric(df['Market capitalization in billion USD (2017)'])
-        df_merged = df.merge(exchange_rates_df, on='Currency')
+# Transform data
+def transform(df, csv_path):
+    ''' This function accesses the CSV file for exchange rate
+    information, and adds three columns to the data frame, each
+    containing the transformed version of Market Cap column to
+    respective currencies'''    
+    exchange_rate = pd.read_csv(csv_path)
+    exchange_rate = exchange_rate.set_index('Currency').to_dict()['Rate']
+    df['MC_GBP_Billion'] = [np.round(x*exchange_rate['GBP'],2) for x in df['MC_USD_Billion']]
+    df['MC_EUR_Billion'] = [np.round(x*exchange_rate['EUR'],2) for x in df['MC_USD_Billion']]
+    df['MC_INR_Billion'] = [np.round(x*exchange_rate['INR'],2) for x in df['MC_USD_Billion']]
+    return df
 
-        # Convert market capitalization to GBP, EUR, and INR
-        df_merged['MC_GBP_Billion'] = df_merged['MC_USD_Billion'] * df_merged['GBP']
-        df_merged['MC_EUR_Billion'] = df_merged['MC_USD_Billion'] * df_merged['EUR']
-        df_merged['MC_INR_Billion'] = df_merged['MC_USD_Billion'] * df_merged['INR']
+# Load to CSV
+def load_to_csv(df, output_path):
+    ''' This function saves the final data frame as a CSV file in
+    the provided path. Function returns nothing.'''
+    df.to_csv(output_path)
 
-        # Round values to 2 decimal places
-        df_merged = df_merged.round({'MC_GBP_Billion': 2, 'MC_EUR_Billion': 2, 'MC_INR_Billion': 2})
+# Load to database
+def load_to_db(df, sql_connection, table_name):
+    ''' This function saves the final data frame to a database
+    table with the provided name. Function returns nothing.'''
+    df.to_sql(table_name, sql_connection, if_exists='replace', index=False)
 
-        return df_merged
-    except Exception as e:
-        print(f"Error occurred during transformation: {str(e)}")
-        return None
+def run_query(query_statement, sql_connection):
+    ''' This function runs the query on the database table and
+    prints the output on the terminal. Function returns nothing. '''
+    print(query_statement)
+    query_output = pd.read_sql(query_statement, sql_connection)
+    print(query_output)
 
-# Task 4: Load transformed dataframe to an output CSV file
-def load_to_csv(df, output_csv_path):
-    try:
-        df.to_csv(output_csv_path, index=False)
-        print("Data saved to CSV successfully.")
-    except Exception as e:
-        print(f"Error occurred while saving data to CSV: {str(e)}")
+# Actual code
+log_progress('Preliminaries complete. Initiating ETL process')
+url = 'https://web.archive.org/web/20230908091635 /https://en.wikipedia.org/wiki/List_of_largest_banks'
+table_attribs = ["Name", "MC_USD_Billion"]
+df = extract(url, table_attribs)
 
-# Task 5: Load transformed dataframe to an SQL database server as a table
-def load_to_db(df, db_name, table_name):
-    try:
-        conn = sqlite3.connect(db_name)
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
-        conn.close()
-        print("Data loaded to database successfully.")
-    except Exception as e:
-        print(f"Error occurred while loading data to database: {str(e)}")
+log_progress('Data extraction complete. Initiating Transformation process')
+exchange_rate_csv_path = "https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBMSkillsNetwork-PY0221EN-Coursera/labs/v2/exchange_rate.csv"
+df = transform(df, exchange_rate_csv_path)
 
-# Task 6: Run queries on the database table
-def run_queries(db_name, queries):
-    try:
-        conn = sqlite3.connect(db_name)
-        for query in queries:
-            result = conn.execute(query)
-            print(f"Query: {query}")
-            for row in result:
-                print(row)
-        conn.close()
-    except Exception as e:
-        print(f"Error occurred while running queries: {str(e)}")
+log_progress('Data transformation complete. Initiating Loading process')
+output_csv_path = './Largest_banks_data.csv'
+load_to_csv(df, output_csv_path)
 
-# Task 7: Verify log entries
-def verify_log():
-    try:
-        with open('code_log.txt', 'r') as f:
-            content = f.read()
-            print("Log entries:")
-            print(content)
-    except Exception as e:
-        print(f"Error occurred while verifying log entries: {str(e)}")
+log_progress('Data saved to CSV file')
 
-# Main function
-def main():
-    try:
-        # Task 1: Log progress
-        log_points = ["Task 1: Log progress", "Task 2: Extracting data from URL", "Task 3: Transforming data",
-                      "Task 4: Loading data to CSV", "Task 5: Loading data to database", "Task 6: Running queries",
-                      "Task 7: Verifying log entries"]
-        log_progress(log_points)
+db_name = 'Banks.db'
+table_name = 'Largest_banks'
+sql_connection = sqlite3.connect(db_name)
 
-        # Task 2: Extract tabular information from URL
-        url = "https://web.archive.org/web/20230908091635/https://en.wikipedia.org/wiki/List_of_largest_banks"
-        df = extract(url)
+log_progress('SQL Connection initiated.')
 
-        # Task 3: Transform dataframe
-        exchange_rates_url = "url_path/exchange_rate.csv"
-        exchange_rates_df = pd.read_csv(exchange_rates_url)
-        transformed_df = transform(df, exchange_rates_df)
+load_to_db(df, sql_connection, table_name)
 
-        # Task 4: Load transformed dataframe to CSV
-        output_csv_path = "./Largest_banks_data.csv"
-        load_to_csv(transformed_df, output_csv_path)
+log_progress('Data loaded to Database as table. Executing queries')
 
-        # Task 5: Load transformed dataframe to database
-        db_name = "Banks.db"
-        table_name = "Largest_banks"
-        load_to_db(transformed_df, db_name, table_name)
+queries = [
+    "SELECT * FROM Largest_banks",
+    "SELECT AVG(MC_GBP_Billion) FROM Largest_banks",
+    "SELECT Name from Largest_banks LIMIT 5"
+]
 
-        # Task 6: Run queries on the database table
-        queries = ["SELECT * FROM Largest_banks LIMIT 5;"]
-        run_queries(db_name, queries)
+for i, query in enumerate(queries):
+    run_query(query, sql_connection)
 
-        # Task 7: Verify log entries
-        verify_log()
-    except Exception as e:
-        print(f"Error occurred: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+log_progress('Process Complete.')
+sql_connection.close()
