@@ -1,8 +1,6 @@
-# Data-Engineering
-This repo will host all of my data engineering projects on the following topics:
-Web scraping
-ETL pipelines with python
-Data Warehouse
-Data visualization
-NoSQL Databases
-Data Pipeline automation using Apache airflow
+# ETL using Python
+This repo shows how to perform simple ETL operations using Python Language.
+First, we scrape the website to extract the data
+Next, we transform the data and save as CSV file
+Then, we load the transformed file to a database
+Finally, we can query the databsase using SQL.
