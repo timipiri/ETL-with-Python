@@ -107,7 +107,7 @@ def main():
         df = extract(url)
 
         # Task 3: Transform dataframe
-        exchange_rates_url = "https://cf-courses-data.s3.us.cloud-object-storage.appdomain.cloud/IBMSkillsNetwork-PY0221EN-Coursera/labs/v2/exchange_rate.csv"
+        exchange_rates_url = "url_path/exchange_rate.csv"
         exchange_rates_df = pd.read_csv(exchange_rates_url)
         transformed_df = transform(df, exchange_rates_df)
 
